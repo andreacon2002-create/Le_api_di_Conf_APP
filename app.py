@@ -17,7 +17,7 @@ DEFAULT_DATA = {
     "tipi_miele": ["Acacia", "Millefiori primaverile", "Millefiori estivo", "Castagno", "Castagno 2026", "Tiglio"],
     "formati": ["1 kg", "500 g"],
     "giacenze": {}, # Formato chiave: "Tipo - Formato"
-    "prezzi": {}    # Novità: Formato chiave: "Tipo - Formato", Valore: Prezzo in Euro (float)
+    "prezzi": {}    # Formato chiave: "Tipo - Formato", Valore: Prezzo in Euro (float)
 }
 
 def carica_dati():
@@ -28,7 +28,6 @@ def carica_dati():
     try:
         with open(DATA_FILE, "r") as f:
             data = json.load(f)
-            # Retrocompatibilità: se il JSON vecchio non aveva i 'prezzi', li aggiungiamo
             if "prezzi" not in data:
                 data["prezzi"] = {}
             return data
@@ -62,7 +61,6 @@ tab_vendita, tab_magazzino, tab_impostazioni = st.tabs(["🛒 Vendita", "🍯 Ma
 with tab_vendita:
     st.header("Nuova Vendita")
     
-    # 1. Seleziona il prodotto da aggiungere allo scontrino
     col1, col2 = st.columns(2)
     with col1:
         tipo_sel = st.selectbox("Tipo di Miele", st.session_state.db["tipi_miele"], key="v_tipo")
@@ -73,13 +71,10 @@ with tab_vendita:
     giacenza_attuale = st.session_state.db["giacenze"].get(chiave_prodotto, 0)
     prezzo_attuale = st.session_state.db["prezzi"].get(chiave_prodotto, 0.0)
     
-    # Mostra giacenza e prezzo
     st.info(f"📦 A scaffale: **{giacenza_attuale}** vasetti | 💶 Prezzo: **{prezzo_attuale:.2f} €**")
     
-    # Input quantità
     qta_da_aggiungere = st.number_input("Quantità", min_value=1, value=1, step=1, key="v_qta")
     
-    # Bottone per aggiungere al carrello
     if st.button("➕ Aggiungi allo scontrino", use_container_width=True):
         qta_gia_in_carrello = st.session_state.carrello.get(chiave_prodotto, 0)
         
@@ -93,14 +88,12 @@ with tab_vendita:
             st.session_state.carrello[chiave_prodotto] = qta_gia_in_carrello + qta_da_aggiungere
             st.rerun()
 
-    # 2. Mostra lo Scontrino (Carrello) se ci sono prodotti
     if st.session_state.carrello:
         st.divider()
         st.subheader("🧾 Scontrino Attuale")
         
         totale_euro = 0.0
         
-        # Elenco dei prodotti nel carrello
         for prod, qta in list(st.session_state.carrello.items()):
             p_unitario = st.session_state.db["prezzi"].get(prod, 0.0)
             sub_totale = qta * p_unitario
@@ -110,33 +103,25 @@ with tab_vendita:
             with c_testo:
                 st.write(f"**{qta}x** {prod} (*{sub_totale:.2f} €*)")
             with c_elimina:
-                # Tasto per rimuovere l'elemento dal carrello
                 if st.button("❌", key=f"del_{prod}"):
                     del st.session_state.carrello[prod]
                     st.rerun()
                     
-        # Totale bello grande
         st.metric(label="TOTALE DA INCASSARE", value=f"{totale_euro:.2f} €")
         
-        # Conferma o Annulla
         col_conf, col_ann = st.columns(2)
         with col_conf:
             if st.button("✅ CONFERMA VENDITA", type="primary", use_container_width=True):
-                # Sottrae dal magazzino
                 for prod, qta in st.session_state.carrello.items():
                     st.session_state.db["giacenze"][prod] -= qta
                 aggiorna_db()
-                
-                # Svuota il carrello e festeggia
                 st.session_state.carrello = {}
                 st.success("Vendita registrata! Scaffale aggiornato.")
                 st.balloons()
-                # Il rerun ritarda l'effetto dei balloons, usiamo un trucco visivo
         with col_ann:
             if st.button("🗑️ Annulla", use_container_width=True):
                 st.session_state.carrello = {}
                 st.rerun()
-
 
 # ==========================================
 # SEZIONE 2: GESTIONE SCAFFALE & PREZZI
@@ -144,8 +129,6 @@ with tab_vendita:
 with tab_magazzino:
     st.header("Aggiungi Invasettamento")
     
-    # Non usiamo st.form qui perché vogliamo che il prezzo di default si 
-    # aggiorni dinamicamente quando cambi la selectbox.
     col1, col2 = st.columns(2)
     with col1:
         tipo_add = st.selectbox("Tipo di Miele", st.session_state.db["tipi_miele"], key="add_tipo")
@@ -153,8 +136,6 @@ with tab_magazzino:
         formato_add = st.selectbox("Formato", st.session_state.db["formati"], key="add_formato")
         
     chiave_add = f"{tipo_add} - {formato_add}"
-    
-    # Recupera il prezzo salvato per proporlo di default
     prezzo_memorizzato = st.session_state.db["prezzi"].get(chiave_add, 0.0)
     
     col3, col4 = st.columns(2)
@@ -166,7 +147,7 @@ with tab_magazzino:
     if st.button("Salva in Magazzino e Aggiorna Prezzo", type="primary", use_container_width=True):
         attuale = st.session_state.db["giacenze"].get(chiave_add, 0)
         st.session_state.db["giacenze"][chiave_add] = attuale + qta_add
-        st.session_state.db["prezzi"][chiave_add] = prezzo_add # Aggiorna il prezzo!
+        st.session_state.db["prezzi"][chiave_add] = prezzo_add
         aggiorna_db()
         st.success(f"✅ Aggiunti {qta_add} vasetti. Prezzo impostato a {prezzo_add:.2f} €.")
         st.rerun()
@@ -184,9 +165,29 @@ with tab_magazzino:
                 chiave = f"{tipo} - {formato}"
                 qta = st.session_state.db["giacenze"].get(chiave, 0)
                 prz = st.session_state.db["prezzi"].get(chiave, 0.0)
-                # Mostra quantità ed etichetta con il prezzo
                 cols[idx].metric(label=f"{formato} ({prz:.2f} €)", value=qta)
             st.divider()
+
+    # --- NOVITÀ: PANNELLO DI CORREZIONE / MODIFICA MANUALE ---
+    with st.expander("🛠️ Correggi / Modifica manualmente una giacenza (Admin)"):
+        st.write("Usa questo box se hai fatto un errore di inserimento e vuoi correggere il numero esatto di vasetti.")
+        
+        c_cor1, c_cor2 = st.columns(2)
+        with c_cor1:
+            tipo_corr = st.selectbox("Tipo di Miele", st.session_state.db["tipi_miele"], key="corr_tipo")
+        with c_cor2:
+            formato_corr = st.selectbox("Formato", st.session_state.db["formati"], key="corr_formato")
+            
+        chiave_corr = f"{tipo_corr} - {formato_corr}"
+        giacenza_reale = st.session_state.db["giacenze"].get(chiave_corr, 0)
+        
+        nuova_qta_esatta = st.number_input("Imposta la quantità esatta a scaffale", min_value=0, value=int(giacenza_reale), step=1)
+        
+        if st.button("💾 Sovrascrivi Giacenza", use_container_width=True):
+            st.session_state.db["giacenze"][chiave_corr] = nuova_qta_esatta
+            aggiorna_db()
+            st.success(f"✅ Giacenza aggiornata per {chiave_corr}: ora ci sono {nuova_qta_esatta} vasetti.")
+            st.rerun()
 
 # ==========================================
 # SEZIONE 3: IMPOSTAZIONI
