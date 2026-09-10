@@ -383,7 +383,7 @@ with tab_stats:
 with tab_impostazioni:
     st.header("Categorie Dinamiche")
     
-    st.subheader("Tipi di Miele")
+    st.subheader("➕ Aggiungi Tipo di Miele")
     col_t1, col_t2 = st.columns([3, 1])
     nuovo_tipo = col_t1.text_input("Nuovo tipo (es. Favo, Tarassaco)")
     if col_t2.button("Aggiungi Tipo", use_container_width=True):
@@ -391,8 +391,50 @@ with tab_impostazioni:
             st.session_state.db["tipi_miele"].append(nuovo_tipo)
             aggiorna_db()
             st.rerun()
+            
     st.write("Attuali:", ", ".join(st.session_state.db["tipi_miele"]))
     
+    st.divider()
+    
+    st.subheader("✏️ Rinomina un Tipo di Miele Esistente")
+    st.caption("Rinominando una categoria, le quantità a magazzino e i prezzi verranno trasferiti automaticamente al nuovo nome.")
+    
+    col_r1, col_r2 = st.columns(2)
+    with col_r1:
+        tipo_da_rinominare = st.selectbox("Seleziona il tipo da cambiare", st.session_state.db["tipi_miele"], key="rin_vecchio")
+    with col_r2:
+        nuovo_nome_tipo = st.text_input("Nuovo nome", value=f"{tipo_da_rinominare} 2025", key="rin_nuovo")
+        
+    if st.button("🔄 Conferma e Rinomina", type="primary", use_container_width=True):
+        if nuovo_nome_tipo and nuovo_nome_tipo != tipo_da_rinominare:
+            # 1. Aggiorna la lista tipi_miele
+            idx = st.session_state.db["tipi_miele"].index(tipo_da_rinominare)
+            st.session_state.db["tipi_miele"][idx] = nuovo_nome_tipo
+            
+            # 2. Trasferisce le giacenze mantenendo le quantità
+            nuove_giacenze = {}
+            for k, v in st.session_state.db["giacenze"].items():
+                if k.startswith(f"{tipo_da_rinominare} - "):
+                    nuova_k = k.replace(f"{tipo_da_rinominare} - ", f"{nuovo_nome_tipo} - ", 1)
+                    nuove_giacenze[nuova_k] = v
+                else:
+                    nuove_giacenze[k] = v
+            st.session_state.db["giacenze"] = nuove_giacenze
+            
+            # 3. Trasferisce i prezzi
+            nuovi_prezzi = {}
+            for k, v in st.session_state.db["prezzi"].items():
+                if k.startswith(f"{tipo_da_rinominare} - "):
+                    nuova_k = k.replace(f"{tipo_da_rinominare} - ", f"{nuovo_nome_tipo} - ", 1)
+                    nuovi_prezzi[nuova_k] = v
+                else:
+                    nuovi_prezzi[k] = v
+            st.session_state.db["prezzi"] = nuovi_prezzi
+            
+            aggiorna_db()
+            st.success(f"✅ Riconvertito '{tipo_da_rinominare}' in '{nuovo_nome_tipo}' senza perdere le quantità!")
+            st.rerun()
+
     st.divider()
     
     st.subheader("Formati Vasetti")
