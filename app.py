@@ -42,7 +42,11 @@ def carica_dati():
     """Carica i dati da JSONbin Cloud o da file locale se in sviluppo."""
     if BIN_ID and API_KEY:
         url = f"https://api.jsonbin.io/v3/b/{BIN_ID}/latest"
-        req = urllib.request.Request(url, headers={"X-Master-Key": API_KEY})
+        headers = {
+            "X-Master-Key": API_KEY,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        }
+        req = urllib.request.Request(url, headers=headers)
         try:
             with urllib.request.urlopen(req) as response:
                 res = json.loads(response.read().decode())
@@ -67,13 +71,15 @@ def salva_dati(dati):
     """Salva i dati su JSONbin Cloud e in locale."""
     if BIN_ID and API_KEY:
         url = f"https://api.jsonbin.io/v3/b/{BIN_ID}"
+        headers = {
+            "Content-Type": "application/json",
+            "X-Master-Key": API_KEY,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        }
         req = urllib.request.Request(
             url, 
             data=json.dumps(dati).encode('utf-8'),
-            headers={
-                "Content-Type": "application/json",
-                "X-Master-Key": API_KEY
-            },
+            headers=headers,
             method='PUT'
         )
         try:
@@ -82,7 +88,7 @@ def salva_dati(dati):
         except Exception as e:
             st.error(f"⚠️ Errore salvataggio nel Cloud: {e}")
 
-    # Salva comunque una copia temporanea locale
+    # Salva una copia temporanea locale
     with open(DATA_FILE, "w") as f:
         json.dump(dati, f, indent=4)
 
@@ -464,7 +470,6 @@ with tab_impostazioni:
     st.header("💾 Backup & Ripristino Dati")
     st.caption("Scarica una copia dei tuoi dati sul telefono o ripristina un backup precedente.")
     
-    # Pulsante per scaricare il file JSON di backup
     json_data_str = json.dumps(st.session_state.db, indent=4)
     st.download_button(
         label="📥 Scarica Backup Dati (JSON)",
@@ -474,7 +479,6 @@ with tab_impostazioni:
         use_container_width=True
     )
     
-    # Caricamento file per ripristino
     uploaded_backup = st.file_uploader("Upload File Backup per ripristinare i dati", type=["json"])
     if uploaded_backup is not None:
         try:
