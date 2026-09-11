@@ -1,6 +1,7 @@
 import streamlit as st
 import json
 import os
+import urllib.request
 from datetime import datetime
 
 # --- CONFIGURAZIONE PAGINA ---
@@ -11,19 +12,22 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# --- RECUPERO CREDENZIALI CLOUD ---
+BIN_ID = st.secrets.get("JSONBIN_BIN_ID", None)
+API_KEY = st.secrets.get("JSONBIN_API_KEY", None)
+
 DATA_FILE = "inventario_miele.json"
 
 DEFAULT_DATA = {
-    "tipi_miele": ["Acacia", "Millefiori primaverile", "Millefiori estivo", "Castagno", "Castagno 2026", "Tiglio"],
+    "tipi_miele": ["Acacia", "Millefiori primaverile", "Millefiori estivo", "Castagno", "Castagno 2025", "Castagno 2026", "Tiglio"],
     "formati": ["1 kg", "500 g"],
-    "giacenze": {},        # "Tipo - Formato": quantità
-    "prezzi": {},          # "Tipo - Formato": prezzo
-    "ordini_pendenti": [], # Lista di ordini non ancora consegnati
-    "storico_vendite": []  # Lista di ordini consegnati (per le statistiche)
+    "giacenze": {},        
+    "prezzi": {},          
+    "ordini_pendenti": [], 
+    "storico_vendite": []  
 }
 
 def estrai_peso_kg(formato_str):
-    """Estrae il peso in Kg da una stringa formato (es. '1 kg' -> 1.0, '500 g' -> 0.5)."""
     f = formato_str.lower().strip()
     try:
         if 'kg' in f:
@@ -32,26 +36,53 @@ def estrai_peso_kg(formato_str):
             return float(f.replace('g', '').replace(',', '.').strip()) / 1000.0
     except Exception:
         pass
-    return 0.5  # valore di fallback se sconosciuto
+    return 0.5
 
 def carica_dati():
-    """Carica i dati dal file JSON e assicura la presenza di tutte le strutture necessarie."""
+    """Carica i dati da JSONbin Cloud o da file locale se in sviluppo."""
+    if BIN_ID and API_KEY:
+        url = f"https://api.jsonbin.io/v3/b/{BIN_ID}/latest"
+        req = urllib.request.Request(url, headers={"X-Master-Key": API_KEY})
+        try:
+            with urllib.request.urlopen(req) as response:
+                res = json.loads(response.read().decode())
+                data = res.get("record", DEFAULT_DATA)
+                if "prezzi" not in data: data["prezzi"] = {}
+                if "ordini_pendenti" not in data: data["ordini_pendenti"] = []
+                if "storico_vendite" not in data: data["storico_vendite"] = []
+                return data
+        except Exception as e:
+            st.error(f"⚠️ Errore caricamento dal Cloud: {e}")
+    
+    # Fallback locale se non sono impostati i Secrets
     if not os.path.exists(DATA_FILE):
-        salva_dati(DEFAULT_DATA)
         return DEFAULT_DATA
     try:
         with open(DATA_FILE, "r") as f:
-            data = json.load(f)
-            # Garantisce retrocompatibilità con versioni precedenti del file JSON
-            if "prezzi" not in data: data["prezzi"] = {}
-            if "ordini_pendenti" not in data: data["ordini_pendenti"] = []
-            if "storico_vendite" not in data: data["storico_vendite"] = []
-            return data
+            return json.load(f)
     except Exception:
         return DEFAULT_DATA
 
 def salva_dati(dati):
-    """Salva il dizionario dati nel file JSON."""
+    """Salva i dati su JSONbin Cloud e in locale."""
+    if BIN_ID and API_KEY:
+        url = f"https://api.jsonbin.io/v3/b/{BIN_ID}"
+        req = urllib.request.Request(
+            url, 
+            data=json.dumps(dati).encode('utf-8'),
+            headers={
+                "Content-Type": "application/json",
+                "X-Master-Key": API_KEY
+            },
+            method='PUT'
+        )
+        try:
+            with urllib.request.urlopen(req) as response:
+                pass
+        except Exception as e:
+            st.error(f"⚠️ Errore salvataggio nel Cloud: {e}")
+
+    # Salva comunque una copia temporanea locale
     with open(DATA_FILE, "w") as f:
         json.dump(dati, f, indent=4)
 
@@ -116,7 +147,6 @@ with tab_vendita:
             sub_totale = qta * p_unitario
             totale_euro += sub_totale
             
-            # Estrazione tipo e formato per le statistiche
             parti = prod.split(" - ")
             tipo_m = parti[0]
             formato_m = parti[1] if len(parti) > 1 else ""
@@ -141,7 +171,7 @@ with tab_vendita:
         st.metric(label="TOTALE ORDINE", value=f"{totale_euro:.2f} €")
         
         st.subheader("Dettagli Cliente e Consegna")
-        nome_cliente = st.text_input("Nome Cliente / Note (es. Mario Rossi, Zia Maria)", placeholder="E.g. Marco - Consegna sabato")
+        nome_cliente = st.text_input("Nome Cliente / Note", placeholder="E.g. Marco - Consegna sabato")
         
         tipo_consegna = st.radio("Stato iniziale dell'ordine:", [
             "📌 Prenotazione (Da consegnare in seguito)", 
@@ -157,7 +187,6 @@ with tab_vendita:
                     ora_attuale = datetime.now().strftime("%Y-%m-%d %H:%M")
                     mese_attuale = datetime.now().strftime("%Y-%m")
                     
-                    # 1. Scala subito le scorte dallo scaffale per evitare vendite doppie!
                     for item in dettagli_prodotti:
                         st.session_state.db["giacenze"][item["chiave"]] -= item["qta"]
                     
@@ -172,13 +201,13 @@ with tab_vendita:
                     if "Prenotazione" in tipo_consegna:
                         nuovo_ordine["stato"] = "Da consegnare"
                         st.session_state.db["ordini_pendenti"].append(nuovo_ordine)
-                        st.success(f"📌 Ordine registrato per '{nome_cliente}' tra gli Ordini Pendenti. Scorta scalata!")
+                        st.success(f"📌 Ordine registrato per '{nome_cliente}' negli Ordini Pendenti. Scorta scalata!")
                     else:
                         nuovo_ordine["stato"] = "Consegnato"
                         nuovo_ordine["data_consegna"] = ora_attuale
                         nuovo_ordine["mese_consegna"] = mese_attuale
                         st.session_state.db["storico_vendite"].append(nuovo_ordine)
-                        st.success(f"✅ Vendita immediata registrata e inviata allo Storico per '{nome_cliente}'!")
+                        st.success(f"✅ Vendita immediata registrata nello Storico per '{nome_cliente}'!")
                         st.balloons()
                     
                     aggiorna_db()
@@ -199,7 +228,7 @@ with tab_ordini:
     ordini_pendenti = st.session_state.db.get("ordini_pendenti", [])
     
     if not ordini_pendenti:
-        st.info("🎉 Non ci sono ordini in attesa di consegna! Tutto consegnato.")
+        st.info("🎉 Non ci sono ordini in attesa di consegna!")
     else:
         st.write(f"Ci sono **{len(ordini_pendenti)}** ordini in attesa:")
         
@@ -212,7 +241,6 @@ with tab_ordini:
                 col_c1, col_c2 = st.columns(2)
                 with col_c1:
                     if st.button(f"✅ Segna come CONSEGNATO", key=f"cons_{idx}", type="primary", use_container_width=True):
-                        # Sposta negli ordini consegnati
                         ordn["stato"] = "Consegnato"
                         ora_cons = datetime.now().strftime("%Y-%m-%d %H:%M")
                         ordn["data_consegna"] = ora_cons
@@ -226,7 +254,6 @@ with tab_ordini:
                         
                 with col_c2:
                     if st.button(f"❌ Annulla Ordine", key=f"ann_{idx}", use_container_width=True):
-                        # Ripristina le giacenze a magazzino
                         for p in ordn["prodotti"]:
                             att = st.session_state.db["giacenze"].get(p["chiave"], 0)
                             st.session_state.db["giacenze"][p["chiave"]] = att + p["qta"]
@@ -277,7 +304,7 @@ with tab_magazzino:
             cols[idx].metric(label=f"{formato} ({prz:.2f} €)", value=f"{qta} vasetti")
         st.divider()
 
-    with st.expander("🛠️ Correggi / Modifica manualmente una giacenza (Admin)"):
+    with st.expander("🛠️ Correggi / Modifica manualmente una giacenza"):
         c_cor1, c_cor2 = st.columns(2)
         with c_cor1:
             tipo_corr = st.selectbox("Tipo di Miele", st.session_state.db["tipi_miele"], key="corr_tipo")
@@ -305,19 +332,16 @@ with tab_stats:
     if not storico:
         st.info("Non ci sono ancora vendite consegnate registrate nello storico.")
     else:
-        # Estrazione di tutti i mesi presenti nello storico
         mesi_disponibili = sorted(list(set(ordn.get("mese_consegna", "N/D") for ordn in storico)), reverse=True)
         mesi_opzioni = ["Tutti i mesi"] + mesi_disponibili
         
         mese_selezionato = st.selectbox("🗓️ Filtra per Mese di Consegna", mesi_opzioni)
         
-        # Filtro vendite
         if mese_selezionato == "Tutti i mesi":
             vendite_filtrate = storico
         else:
             vendite_filtrate = [o for o in storico if o.get("mese_consegna") == mese_selezionato]
             
-        # Calcolo Metriche Principali
         totale_incasso = sum(o["totale_euro"] for o in vendite_filtrate)
         totale_vasetti = 0
         totale_kg_miele = 0.0
@@ -346,7 +370,6 @@ with tab_stats:
                 else:
                     vasetti_per_formato[formato] = qta
 
-        # Visualizzazione Metriche aggregate
         col_m1, col_m2, col_m3 = st.columns(3)
         col_m1.metric("Incasso Totale", f"{totale_incasso:.2f} €")
         col_m2.metric("Kg Miele Venduti", f"{totale_kg_miele:.1f} kg")
@@ -354,9 +377,7 @@ with tab_stats:
         
         st.divider()
         
-        # Grafici e Breakdown
         st.subheader("🍯 Kg Venduti per Tipo di Miele")
-        # Mostra solo i mieli con vendite > 0
         kg_filtrati = {k: v for k, v in kg_per_tipo.items() if v > 0}
         if kg_filtrati:
             st.bar_chart(kg_filtrati)
@@ -378,7 +399,7 @@ with tab_stats:
                     st.write(f"- {p['qta']}x {p['chiave']} (*{p['subtotale']:.2f} €*)")
 
 # ==========================================
-# TAB 5: IMPOSTAZIONI
+# TAB 5: IMPOSTAZIONI & BACKUP
 # ==========================================
 with tab_impostazioni:
     st.header("Categorie Dinamiche")
@@ -397,52 +418,71 @@ with tab_impostazioni:
     st.divider()
     
     st.subheader("✏️ Rinomina un Tipo di Miele Esistente")
-    st.caption("Rinominando una categoria, le quantità a magazzino e i prezzi verranno trasferiti automaticamente al nuovo nome.")
-    
     col_r1, col_r2 = st.columns(2)
     with col_r1:
-        tipo_da_rinominare = st.selectbox("Seleziona il tipo da cambiare", st.session_state.db["tipi_miele"], key="rin_vecchio")
+        tipo_da_rinominare = st.selectbox("Seleziona tipo", st.session_state.db["tipi_miele"], key="rin_vecchio")
     with col_r2:
         nuovo_nome_tipo = st.text_input("Nuovo nome", value=f"{tipo_da_rinominare} 2025", key="rin_nuovo")
         
     if st.button("🔄 Conferma e Rinomina", type="primary", use_container_width=True):
         if nuovo_nome_tipo and nuovo_nome_tipo != tipo_da_rinominare:
-            # 1. Aggiorna la lista tipi_miele
             idx = st.session_state.db["tipi_miele"].index(tipo_da_rinominare)
             st.session_state.db["tipi_miele"][idx] = nuovo_nome_tipo
             
-            # 2. Trasferisce le giacenze mantenendo le quantità
             nuove_giacenze = {}
             for k, v in st.session_state.db["giacenze"].items():
                 if k.startswith(f"{tipo_da_rinominare} - "):
-                    nuova_k = k.replace(f"{tipo_da_rinominare} - ", f"{nuovo_nome_tipo} - ", 1)
-                    nuove_giacenze[nuova_k] = v
+                    nuove_giacenze[k.replace(f"{tipo_da_rinominare} - ", f"{nuovo_nome_tipo} - ", 1)] = v
                 else:
                     nuove_giacenze[k] = v
             st.session_state.db["giacenze"] = nuove_giacenze
             
-            # 3. Trasferisce i prezzi
             nuovi_prezzi = {}
             for k, v in st.session_state.db["prezzi"].items():
                 if k.startswith(f"{tipo_da_rinominare} - "):
-                    nuova_k = k.replace(f"{tipo_da_rinominare} - ", f"{nuovo_nome_tipo} - ", 1)
-                    nuovi_prezzi[nuova_k] = v
+                    nuovi_prezzi[k.replace(f"{tipo_da_rinominare} - ", f"{nuovo_nome_tipo} - ", 1)] = v
                 else:
                     nuovi_prezzi[k] = v
             st.session_state.db["prezzi"] = nuovi_prezzi
             
             aggiorna_db()
-            st.success(f"✅ Riconvertito '{tipo_da_rinominare}' in '{nuovo_nome_tipo}' senza perdere le quantità!")
+            st.success(f"✅ Riconvertito in '{nuovo_nome_tipo}'!")
             st.rerun()
 
     st.divider()
     
     st.subheader("Formati Vasetti")
     col_f1, col_f2 = st.columns([3, 1])
-    nuovo_formato = col_f1.text_input("Nuovo formato (es. 250 g, 100 g)")
+    nuovo_formato = col_f1.text_input("Nuovo formato (es. 250 g)")
     if col_f2.button("Aggiungi Formato", use_container_width=True):
         if nuovo_formato and nuovo_formato not in st.session_state.db["formati"]:
             st.session_state.db["formati"].append(nuovo_formato)
             aggiorna_db()
             st.rerun()
-    st.write("Attuali:", ", ".join(st.session_state.db["formati"]))
+            
+    st.divider()
+    st.header("💾 Backup & Ripristino Dati")
+    st.caption("Scarica una copia dei tuoi dati sul telefono o ripristina un backup precedente.")
+    
+    # Pulsante per scaricare il file JSON di backup
+    json_data_str = json.dumps(st.session_state.db, indent=4)
+    st.download_button(
+        label="📥 Scarica Backup Dati (JSON)",
+        data=json_data_str,
+        file_name=f"backup_miele_{datetime.now().strftime('%Y%m%d')}.json",
+        mime="application/json",
+        use_container_width=True
+    )
+    
+    # Caricamento file per ripristino
+    uploaded_backup = st.file_uploader("Upload File Backup per ripristinare i dati", type=["json"])
+    if uploaded_backup is not None:
+        try:
+            dati_caricati = json.load(uploaded_backup)
+            if st.button("⚠️ Ripristina Dati da File Uploadato", type="primary", use_container_width=True):
+                st.session_state.db = dati_caricati
+                aggiorna_db()
+                st.success("✅ Dati ripristinati con successo!")
+                st.rerun()
+        except Exception as e:
+            st.error(f"File non valido: {e}")
